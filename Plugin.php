@@ -2,7 +2,7 @@
 if (!defined('__TYPECHO_ROOT_DIR__')) exit;
 
 /**
- * 音乐专辑插件，文章使用短链接引用专辑 [MAG-歌手名称] [MAG-歌手名称-专辑1名称,专辑2名称] [MAG-专辑名称] for Typecho 1.3
+ * 音乐专辑插件，文章使用短代码引用专辑 [MAG-歌手名称] [MAG-歌手名称-专辑1名称,专辑2名称] [MAG-专辑名称] for Typecho 1.3
  * 
  * @package MyAudioGallery
  * @author Nicotine-2
