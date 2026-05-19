@@ -8,11 +8,9 @@ $options = Helper::options();
 $pluginConfig = $options->plugin('MyMusicAlbum');
 $uploadDir = $pluginConfig->uploadDir ?: '/usr/uploads/MyMusicAlbum';
 $uploadPath = __TYPECHO_ROOT_DIR__ . $uploadDir;
-// 支持软连接：获取真实路径
 $uploadFullPath = is_link($uploadPath) ? readlink($uploadPath) : $uploadPath;
 $uploadUrl = rtrim(Helper::options()->siteUrl, '/') . '/' . trim($uploadDir, '/');
 
-// 确保目录存在（如果是软连接，检查真实路径）
 if (!is_dir($uploadFullPath) && !is_link($uploadPath)) {
     mkdir($uploadFullPath, 0755, true);
 }
@@ -22,7 +20,6 @@ $currentAlbum = isset($_GET['album']) ? trim($_GET['album']) : '';
 $panelPath = 'MyMusicAlbum/manage.php';
 $currentUrl = $options->adminUrl . 'extending.php?panel=' . $panelPath;
 
-// 辅助函数：获取真实路径（支持软连接）
 function getRealPath($path) {
     if (is_link($path)) {
         $linkTarget = readlink($path);
@@ -32,7 +29,6 @@ function getRealPath($path) {
     return $path;
 }
 
-// ========== 文件操作 ==========
 function rrmdir($dir) {
     if (!is_dir($dir)) return;
     $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
@@ -42,7 +38,6 @@ function rrmdir($dir) {
     rmdir($dir);
 }
 
-// ========== AJAX 获取简介 ==========
 if (isset($_GET['get_desc']) && !isset($_GET['ajax_upload'])) {
     $artist = isset($_GET['artist']) ? trim($_GET['artist']) : '';
     $album = isset($_GET['album']) ? trim($_GET['album']) : '';
@@ -51,7 +46,6 @@ if (isset($_GET['get_desc']) && !isset($_GET['ajax_upload'])) {
     exit;
 }
 
-// AJAX 上传
 if (isset($_GET['ajax_upload'])) {
     error_reporting(0);
     header('Content-Type: application/json');
@@ -60,36 +54,75 @@ if (isset($_GET['ajax_upload'])) {
     $album = trim($_POST['album_name'] ?? '');
     $file = $_FILES['file'];
     
-    if ($file['error'] !== UPLOAD_ERR_OK) exit(json_encode(['success' => false, 'error' => '上传失败']));
+    if ($file['error'] !== UPLOAD_ERR_OK) {
+        echo json_encode(['success' => false, 'error' => '上传失败: ' . $file['error']]);
+        exit;
+    }
+    
+    // 验证艺术家名称
+    if (empty($artist)) {
+        echo json_encode(['success' => false, 'error' => '艺术家名称不能为空']);
+        exit;
+    }
+    
+    // 验证专辑名称（如果是音乐文件）
+    if ($type == 'music' && empty($album)) {
+        echo json_encode(['success' => false, 'error' => '专辑名称不能为空']);
+        exit;
+    }
     
     $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
     $targetDir = $uploadFullPath . '/' . $artist . ($album ? '/' . $album : '');
     if (!is_dir($targetDir)) mkdir($targetDir, 0755, true);
     
     if ($type == 'avatar') {
-        if (!in_array($ext, ['jpg','jpeg','png'])) exit(json_encode(['success' => false, 'error' => '只支持 jpg/png']));
+        if (!in_array($ext, ['jpg','jpeg','png'])) {
+            echo json_encode(['success' => false, 'error' => '只支持 jpg/png']);
+            exit;
+        }
         $target = $targetDir . '/avatar.' . $ext;
-        move_uploaded_file($file['tmp_name'], $target);
-        exit(json_encode(['success' => true, 'url' => $uploadUrl . '/' . $artist . '/avatar.' . $ext]));
+        if (move_uploaded_file($file['tmp_name'], $target)) {
+            echo json_encode(['success' => true, 'url' => $uploadUrl . '/' . $artist . '/avatar.' . $ext]);
+        } else {
+            echo json_encode(['success' => false, 'error' => '头像上传失败']);
+        }
+        exit;
     } elseif ($type == 'cover') {
-        if (!in_array($ext, ['jpg','jpeg','png'])) exit(json_encode(['success' => false, 'error' => '只支持 jpg/png']));
+        if (!in_array($ext, ['jpg','jpeg','png'])) {
+            echo json_encode(['success' => false, 'error' => '只支持 jpg/png']);
+            exit;
+        }
         $target = $targetDir . '/cover.' . $ext;
-        move_uploaded_file($file['tmp_name'], $target);
-        exit(json_encode(['success' => true, 'url' => $uploadUrl . '/' . $artist . '/' . $album . '/cover.' . $ext]));
+        if (move_uploaded_file($file['tmp_name'], $target)) {
+            echo json_encode(['success' => true, 'url' => $uploadUrl . '/' . $artist . '/' . $album . '/cover.' . $ext]);
+        } else {
+            echo json_encode(['success' => false, 'error' => '封面上传失败']);
+        }
+        exit;
     } elseif ($type == 'music') {
         $allowed = ['mp3', 'flac', 'wav', 'ogg', 'aac', 'm4a'];
-        if (!in_array($ext, $allowed)) exit(json_encode(['success' => false, 'error' => '支持格式：mp3, flac, wav, ogg, aac, m4a']));
+        if (!in_array($ext, $allowed)) {
+            echo json_encode(['success' => false, 'error' => '支持格式：mp3, flac, wav, ogg, aac, m4a']);
+            exit;
+        }
         $baseName = pathinfo($file['name'], PATHINFO_FILENAME);
         $target = $targetDir . '/' . $baseName . '.' . $ext;
         $counter = 1;
-        while (file_exists($target)) $target = $targetDir . '/' . $baseName . '_' . $counter++ . '.' . $ext;
-        move_uploaded_file($file['tmp_name'], $target);
-        exit(json_encode(['success' => true, 'filename' => basename($target)]));
+        while (file_exists($target)) {
+            $target = $targetDir . '/' . $baseName . '_' . $counter++ . '.' . $ext;
+        }
+        
+        if (move_uploaded_file($file['tmp_name'], $target)) {
+            echo json_encode(['success' => true, 'filename' => basename($target)]);
+        } else {
+            echo json_encode(['success' => false, 'error' => '音乐文件写入失败']);
+        }
+        exit;
     }
-    exit(json_encode(['success' => false, 'error' => '未知类型']));
+    echo json_encode(['success' => false, 'error' => '未知类型']);
+    exit;
 }
 
-// 操作处理
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
 if ($action == 'add_artist') {
     $dir = $uploadFullPath . '/' . trim($_POST['artist_name']);
@@ -124,16 +157,51 @@ if ($action == 'edit_album') {
     echo "<script>window.location.href='" . $currentUrl . "&artist=" . urlencode($_POST['artist_name']) . "&album=" . urlencode($new) . "'</script>";
     exit;
 }
-if ($action == 'delete_artist') { rrmdir($uploadFullPath . '/' . $_GET['artist']); echo "<script>window.location.href='" . $currentUrl . "'</script>"; exit; }
-if ($action == 'delete_album') { rrmdir($uploadFullPath . '/' . $_GET['artist'] . '/' . $_GET['album']); echo "<script>window.location.href='" . $currentUrl . "&artist=" . urlencode($_GET['artist']) . "'</script>"; exit; }
-if ($action == 'delete_song' && $_GET['song']) { unlink($uploadFullPath . '/' . $_GET['artist'] . '/' . $_GET['album'] . '/' . $_GET['song']); echo "<script>window.location.href='" . $currentUrl . "&artist=" . urlencode($_GET['artist']) . "&album=" . urlencode($_GET['album']) . "'</script>"; exit; }
-if ($action == 'batch_delete' && $_POST['songs']) {
-    foreach ($_POST['songs'] as $song) unlink($uploadFullPath . '/' . $_GET['artist'] . '/' . $_GET['album'] . '/' . $song);
-    echo "<script>window.location.href='" . $currentUrl . "&artist=" . urlencode($_GET['artist']) . "&album=" . urlencode($_GET['album']) . "'</script>";
+if ($action == 'delete_artist') {
+    $artist = trim($_GET['artist']);
+    $deletePath = $uploadFullPath . '/' . $artist;
+    if (is_dir($deletePath)) {
+        rrmdir($deletePath);
+    }
+    echo "<script>window.location.href='" . $currentUrl . "'</script>";
+    exit;
+}
+if ($action == 'delete_album') {
+    $artist = trim($_GET['artist']);
+    $album = trim($_GET['album']);
+    $deletePath = $uploadFullPath . '/' . $artist . '/' . $album;
+    if (is_dir($deletePath)) {
+        rrmdir($deletePath);
+    }
+    echo "<script>window.location.href='" . $currentUrl . "&artist=" . urlencode($artist) . "'</script>";
+    exit;
+}
+if ($action == 'delete_song' && !empty($_GET['song'])) {
+    $artist = trim($_GET['artist']);
+    $album = trim($_GET['album']);
+    $song = trim($_GET['song']);
+    $deletePath = $uploadFullPath . '/' . $artist . '/' . $album . '/' . $song;
+    if (file_exists($deletePath) && is_file($deletePath)) {
+        unlink($deletePath);
+    }
+    echo "<script>window.location.href='" . $currentUrl . "&artist=" . urlencode($artist) . "&album=" . urlencode($album) . "'</script>";
+    exit;
+}
+if ($action == 'batch_delete' && !empty($_POST['songs'])) {
+    $artist = trim($_GET['artist']);
+    $album = trim($_GET['album']);
+    $songs = json_decode($_POST['songs'], true) ?? [];
+    foreach ($songs as $song) {
+        $song = trim($song);
+        $deletePath = $uploadFullPath . '/' . $artist . '/' . $album . '/' . $song;
+        if (file_exists($deletePath) && is_file($deletePath)) {
+            unlink($deletePath);
+        }
+    }
+    echo "<script>window.location.href='" . $currentUrl . "&artist=" . urlencode($artist) . "&album=" . urlencode($album) . "'</script>";
     exit;
 }
 
-// 获取数据（支持软连接）
 $artists = array();
 $artistDirs = glob($uploadFullPath . '/*', GLOB_ONLYDIR);
 foreach ($artistDirs as $artistDir) {
@@ -166,10 +234,8 @@ if ($currentArtist) {
 
 $songs = ($currentArtist && $currentAlbum) ? array_map('basename', glob($uploadFullPath . '/' . $currentArtist . '/' . $currentAlbum . '/*.{mp3,flac,wav,ogg,aac,m4a}', GLOB_BRACE)) : [];
 
-// 保持原有样式和HTML结构不变，继续输出...
 ?>
 <style>
-/* 保持原有样式不变 */
 .main, .body.container, .typecho-page-title { background: transparent !important; }
 .typecho-page-title h2 { color: var(--md-on-surface, #e0e0e0) !important; border-bottom: 1px solid var(--md-outline-variant, #3c3c42) !important; padding-bottom: 10px; margin-bottom: 20px; }
 .back-link { display: inline-block; margin-bottom: 20px; text-decoration: none; font-size: 14px; color: var(--md-primary, #6e9eff) !important; }
@@ -198,8 +264,8 @@ $songs = ($currentArtist && $currentAlbum) ? array_map('basename', glob($uploadF
 .album-info-card .info-value input, .album-info-card .info-value textarea { width: 100%; padding: 8px 12px; border: 1px solid #dcdfe6; border-radius: 8px; font-size: 14px; background: #ffffff !important; color: #333 !important; }
 .album-info-card .info-value textarea { min-height: 80px; resize: vertical; }
 .album-info-card .card-actions { padding: 16px 24px 24px 24px; background: #fafbfc; border-top: 1px solid #f0f0f0; display: flex; gap: 12px; }
-.album-info-card .btn-save { background: #0071e3; color: #fff; border: none; padding: 8px 24px; border-radius: 10px; cursor: pointer; font-size: 14px; }
-.album-info-card .btn-delete { background: #ff4d4f; color: #fff; border: none; padding: 8px 24px; border-radius: 10px; cursor: pointer; font-size: 14px; }
+.album-info-card .btn-save { background: #0071e3; color: #fff; border: none; padding: 8px 24px; border-radius: 10px; cursor: pointer; }
+.album-info-card .btn-delete { background: #ff4d4f; color: #fff; border: none; padding: 8px 24px; border-radius: 10px; cursor: pointer; }
 .upload-section { background: #ffffff; border: 1px solid #e0e0e0; border-radius: 20px; padding: 20px; margin-bottom: 25px; width: 100%; }
 .upload-section h4 { color: #333 !important; margin: 0 0 15px 0; font-size: 15px; font-weight: 600; }
 .file-input-wrapper { margin-bottom: 15px; }
@@ -217,7 +283,7 @@ $songs = ($currentArtist && $currentAlbum) ? array_map('basename', glob($uploadF
 .btn-upload { background: #0071e3; color: #fff; border: none; padding: 8px 24px; border-radius: 6px; cursor: pointer; }
 .btn-clear { background: #ff8c00; color: #fff; border: none; padding: 8px 24px; border-radius: 6px; cursor: pointer; }
 .btn-select-file { background: #28a745; color: #fff; border: none; padding: 8px 20px; border-radius: 10px; cursor: pointer; }
-.upload-status { margin-top: 12px; font-size: 13px; text-align: center; color: #666 !important; }
+.upload-status { display: none; /* 隐藏上传状态栏 */ }
 .songs-section { margin-top: 20px; }
 .photos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; width: 100%; }
 .song-card { position: relative; width: 100%; border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; background: #fff; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: space-between; box-sizing: border-box; }
@@ -248,7 +314,6 @@ $songs = ($currentArtist && $currentAlbum) ? array_map('basename', glob($uploadF
         <div class="typecho-page-title"><h2>我的专辑</h2></div>
 
 <?php if ($currentAlbum): ?>
-    <!-- 第三层：歌曲管理 -->
     <div class="album-detail-header">
         <a href="<?php echo $currentUrl; ?>&artist=<?php echo urlencode($currentArtist); ?>" class="back-link">← 返回专辑列表</a>
     </div>
@@ -298,7 +363,7 @@ $songs = ($currentArtist && $currentAlbum) ? array_map('basename', glob($uploadF
         </div>
         <div class="file-list" id="fileList" style="display:none;">
             <div style="background:#f5f5f5; padding:10px 12px; font-weight:bold; font-size:12px; border-radius:10px;">待上传文件列表</div>
-            <div id="selectedFiles" style="margin-top:0;"></div>
+            <div class="files-grid" id="selectedFiles"></div>
         </div>
         <div class="upload-buttons">
             <button type="button" class="btn-upload" id="startUploadBtn" style="display:none;">开始上传</button>
@@ -314,6 +379,10 @@ $songs = ($currentArtist && $currentAlbum) ? array_map('basename', glob($uploadF
         <a href="javascript:void(0)" id="cancelSelectBtn" class="batch-link">取消选择</a>
         <button id="batchDeleteBtn" class="batch-delete-btn">批量删除</button>
     </div>
+    <form id="batchDeleteForm" method="post" style="display:none;">
+        <input type="hidden" name="action" value="batch_delete">
+        <input type="hidden" name="songs" id="batchDeleteSongs">
+    </form>
     <div class="photos-grid" id="songsGrid">
         <?php foreach($songs as $song): ?>
         <div class="song-card" data-song="<?php echo htmlspecialchars($song); ?>">
@@ -329,7 +398,6 @@ $songs = ($currentArtist && $currentAlbum) ? array_map('basename', glob($uploadF
     <?php endif; ?>
 
 <?php elseif ($currentArtist): ?>
-    <!-- 第二层：专辑管理 -->
     <div class="album-detail-header">
         <a href="<?php echo $currentUrl; ?>" class="back-link">← 返回音乐人列表</a>
     </div>
@@ -391,7 +459,6 @@ $songs = ($currentArtist && $currentAlbum) ? array_map('basename', glob($uploadF
     <?php endif; ?>
 
 <?php else: ?>
-    <!-- 第一层：音乐人列表 -->
     <div class="artists-header">
         <button class="btn-primary" onclick="openModal('addArtistModal')">+ 新建音乐人</button>
     </div>
@@ -417,11 +484,11 @@ $songs = ($currentArtist && $currentAlbum) ? array_map('basename', glob($uploadF
     </div>
 </div>
 
-<!-- 模态框 -->
 <div id="addArtistModal" class="modal" style="display:none;">
     <div class="modal-content">
         <h3>新建音乐人</h3>
         <form method="post">
+            <input type="hidden" name="action" value="add_artist">
             <input type="text" name="artist_name" placeholder="音乐人名称 *" required>
             <textarea name="artist_desc" placeholder="音乐人简介（可选）"></textarea>
             <div class="url-input-group">
@@ -430,7 +497,7 @@ $songs = ($currentArtist && $currentAlbum) ? array_map('basename', glob($uploadF
             </div>
             <div class="modal-buttons">
                 <button type="button" onclick="closeModal('addArtistModal')">取消</button>
-                <button type="submit" name="add_artist" class="btn-primary">创建</button>
+                <button type="submit" class="btn-primary">创建</button>
             </div>
         </form>
     </div>
@@ -440,6 +507,7 @@ $songs = ($currentArtist && $currentAlbum) ? array_map('basename', glob($uploadF
     <div class="modal-content">
         <h3>新建专辑</h3>
         <form method="post">
+            <input type="hidden" name="action" value="add_album">
             <input type="hidden" name="artist_name" value="<?php echo htmlspecialchars($currentArtist); ?>">
             <input type="text" name="album_name" placeholder="专辑名称 *" required>
             <textarea name="album_desc" placeholder="专辑简介（可选）"></textarea>
@@ -449,7 +517,7 @@ $songs = ($currentArtist && $currentAlbum) ? array_map('basename', glob($uploadF
             </div>
             <div class="modal-buttons">
                 <button type="button" onclick="closeModal('addAlbumModal')">取消</button>
-                <button type="submit" name="add_album" class="btn-primary">创建</button>
+                <button type="submit" class="btn-primary">创建</button>
             </div>
         </form>
     </div>
@@ -530,6 +598,16 @@ function editArtist(name) {
             document.getElementById('edit_old_artist_name').value = name;
             document.getElementById('edit_artist_name').value = name;
             document.getElementById('edit_artist_desc').value = cleanDesc;
+            var avatarUrl = '<?php echo $uploadUrl; ?>/' + encodeURIComponent(name) + '/avatar.jpg';
+            fetch(avatarUrl).then(res => {
+                if (res.ok) {
+                    document.getElementById('edit_artist_avatar').value = avatarUrl;
+                } else {
+                    document.getElementById('edit_artist_avatar').value = '';
+                }
+            }).catch(() => {
+                document.getElementById('edit_artist_avatar').value = '';
+            });
             openModal('editArtistModal');
         });
 }
@@ -552,6 +630,16 @@ function editAlbum(name) {
             document.getElementById('edit_old_album_name').value = name;
             document.getElementById('edit_album_name').value = name;
             document.getElementById('edit_album_desc').value = cleanDesc;
+            var coverUrl = '<?php echo $uploadUrl; ?>/<?php echo $currentArtist; ?>/' + encodeURIComponent(name) + '/cover.jpg';
+            fetch(coverUrl).then(res => {
+                if (res.ok) {
+                    document.getElementById('edit_album_cover').value = coverUrl;
+                } else {
+                    document.getElementById('edit_album_cover').value = '';
+                }
+            }).catch(() => {
+                document.getElementById('edit_album_cover').value = '';
+            });
             openModal('editAlbumModal');
         });
 }
@@ -579,94 +667,165 @@ function uploadEditFile(type, inputId, nameId) {
     input.click();
 }
 
-// 音乐上传相关
 var selectedFiles = [], fileInput = document.getElementById('fileInput'), fileListDiv = document.getElementById('fileList'), selectedFilesDiv = document.getElementById('selectedFiles');
 var startUploadBtn = document.getElementById('startUploadBtn'), clearFilesBtn = document.getElementById('clearFilesBtn'), uploadStatus = document.getElementById('uploadStatus'), fileCountInfo = document.getElementById('fileCountInfo');
 
 function updateFileList() {
     selectedFilesDiv.innerHTML = '';
-    if (selectedFiles.length === 0) { fileListDiv.style.display = 'none'; startUploadBtn.style.display = 'none'; clearFilesBtn.style.display = 'none'; fileCountInfo.textContent = '未选择任何文件'; return; }
-    var grid = document.createElement('div'); grid.className = 'files-grid';
-    for (var i = 0; i < selectedFiles.length; i++) {
-        var f = selectedFiles[i];
-        var card = document.createElement('div'); card.className = 'file-card'; card.id = 'file_card_' + i;
-        card.innerHTML = '<div class="file-name"> ' + (f.name.length > 30 ? f.name.substring(0,27)+'...' : f.name) + '</div><div class="file-progress"><div class="file-progress-fill" id="progress_'+i+'"></div></div>';
-        grid.appendChild(card);
+    if (selectedFiles.length === 0) {
+        fileListDiv.style.display = 'none';
+        startUploadBtn.style.display = 'none';
+        clearFilesBtn.style.display = 'none';
+        fileCountInfo.textContent = '未选择任何文件';
+        return;
     }
-    selectedFilesDiv.appendChild(grid);
-    fileListDiv.style.display = 'block'; startUploadBtn.style.display = 'inline-block'; clearFilesBtn.style.display = 'inline-block'; fileCountInfo.textContent = '已选择 ' + selectedFiles.length + ' 个文件';
-}
-
-if (document.getElementById('selectFileBtn')) {
-    document.getElementById('selectFileBtn').onclick = () => fileInput.click();
-    fileInput.onchange = (e) => { selectedFiles = Array.from(e.target.files); updateFileList(); };
-    clearFilesBtn && (clearFilesBtn.onclick = () => { fileInput.value = ''; selectedFiles = []; updateFileList(); uploadStatus.innerHTML = ''; });
-    startUploadBtn && (startUploadBtn.onclick = async function() {
-        if (selectedFiles.length === 0) return;
-        startUploadBtn.disabled = true; clearFilesBtn.disabled = true; uploadStatus.innerHTML = '正在上传...';
-        var success = 0, fail = 0;
-        for (var i = 0; i < selectedFiles.length; i++) {
-            var fd = new FormData();
-            fd.append('file', selectedFiles[i]);
-            fd.append('upload_type', 'music');
-            fd.append('artist_name', '<?php echo $currentArtist; ?>');
-            fd.append('album_name', '<?php echo $currentAlbum; ?>');
-            
-            var xhr = new XMLHttpRequest();
-            var prog = document.getElementById('progress_' + i);
-            
-            xhr.upload.addEventListener('progress', function(e) {
-                if (e.lengthComputable && prog) {
-                    var percent = (e.loaded / e.total) * 100;
-                    prog.style.width = percent + '%';
-                }
-            });
-            
-            xhr.onload = function() {
-                if (xhr.status === 200) {
-                    try {
-                        var result = JSON.parse(xhr.responseText);
-                        result.success ? success++ : fail++;
-                        if (prog) { prog.style.width = '100%'; prog.style.background = result.success ? '#00a854' : '#ff4d4f'; }
-                    } catch(e) { fail++; }
-                } else { fail++; }
-                uploadStatus.innerHTML = '进度：' + (i+1) + '/' + selectedFiles.length + ' 成功:' + success + ' 失败:' + fail;
-                if (i+1 === selectedFiles.length) {
-                    if (fail === 0) { uploadStatus.innerHTML = '✅ 上传完成！刷新中...'; setTimeout(() => location.reload(), 1500); }
-                    else { uploadStatus.innerHTML = '⚠️ 完成！成功 ' + success + '，失败 ' + fail; startUploadBtn.disabled = false; clearFilesBtn.disabled = false; }
-                }
-            };
-            
-            xhr.onerror = function() { fail++; };
-            xhr.open('POST', '<?php echo $currentUrl; ?>&ajax_upload=1', true);
-            xhr.send(fd);
-            await new Promise(resolve => { xhr.onloadend = resolve; });
-        }
+    fileListDiv.style.display = 'block';
+    startUploadBtn.style.display = 'block';
+    clearFilesBtn.style.display = 'block';
+    fileCountInfo.textContent = `已选择 ${selectedFiles.length} 个文件`;
+    
+    selectedFiles.forEach((file, index) => {
+        var fileCard = document.createElement('div');
+        fileCard.className = 'file-card';
+        fileCard.innerHTML = `
+            <div class="file-name">${file.name}</div>
+            <div class="file-progress"><div class="file-progress-fill" id="progress-${index}"></div></div>
+        `;
+        selectedFilesDiv.appendChild(fileCard);
     });
 }
 
-// 批量选择
-<?php if ($songs): ?>
-var songCards = document.querySelectorAll('.song-card'), batchBar = document.getElementById('batchBar'), selectedCount = document.getElementById('selectedCount');
+fileInput.addEventListener('change', function(e) {
+    selectedFiles = Array.from(e.target.files);
+    updateFileList();
+});
+
+document.getElementById('selectFileBtn').addEventListener('click', function() {
+    fileInput.click();
+});
+
+clearFilesBtn.addEventListener('click', function() {
+    selectedFiles = [];
+    fileInput.value = '';
+    updateFileList();
+});
+
+startUploadBtn.addEventListener('click', function() {
+    if (selectedFiles.length === 0) return;
+    startUploadBtn.disabled = true;
+    clearFilesBtn.disabled = true;
+    uploadStatus.textContent = '开始上传...';
+    
+    let successCount = 0;
+    let failCount = 0;
+    let total = selectedFiles.length;
+
+    selectedFiles.forEach((file, index) => {
+        var formData = new FormData();
+        formData.append('file', file);
+        formData.append('upload_type', 'music');
+        formData.append('artist_name', '<?php echo $currentArtist; ?>');
+        formData.append('album_name', '<?php echo $currentAlbum; ?>');
+        
+        // 更新进度条为正在上传状态
+        document.getElementById(`progress-${index}`).style.width = '50%';
+        document.getElementById(`progress-${index}`).style.backgroundColor = '#0071e3'; // 蓝色表示正在上传
+        
+        fetch('<?php echo $currentUrl; ?>&ajax_upload=1', {
+            method: 'POST',
+            body: formData
+        }).then(r => r.json()).then(result => {
+            if (result.success) {
+                successCount++;
+                document.getElementById(`progress-${index}`).style.width = '100%';
+                document.getElementById(`progress-${index}`).style.backgroundColor = '#00a854'; // 绿色表示成功
+            } else {
+                failCount++;
+                document.getElementById(`progress-${index}`).style.width = '100%';
+                document.getElementById(`progress-${index}`).style.backgroundColor = '#ff4d4f'; // 红色表示失败
+            }
+
+            if (successCount + failCount === total) {
+                uploadStatus.textContent = `上传完成：成功 ${successCount} 个，失败 ${failCount} 个`;
+                
+                setTimeout(() => {
+                    selectedFiles = [];
+                    fileInput.value = '';
+                    updateFileList();
+                    window.location.reload();
+                }, 800);
+            }
+        }).catch(err => {
+            failCount++;
+            document.getElementById(`progress-${index}`).style.width = '100%';
+            document.getElementById(`progress-${index}`).style.backgroundColor = '#ff4d4f'; // 红色表示失败
+            
+            if (successCount + failCount === total) {
+                uploadStatus.textContent = `上传完成：成功 ${successCount} 个，失败 ${failCount} 个`;
+                
+                setTimeout(() => {
+                    selectedFiles = [];
+                    fileInput.value = '';
+                    updateFileList();
+                    window.location.reload();
+                }, 800);
+            }
+        });
+    });
+});
+
+var songCards = document.querySelectorAll('.song-card');
+var batchBar = document.getElementById('batchBar');
+var selectedCount = document.getElementById('selectedCount');
+var selectAllBtn = document.getElementById('selectAllBtn');
+var cancelSelectBtn = document.getElementById('cancelSelectBtn');
+var batchDeleteBtn = document.getElementById('batchDeleteBtn');
+var batchDeleteForm = document.getElementById('batchDeleteForm');
+var batchDeleteSongs = document.getElementById('batchDeleteSongs');
 var selectedSongs = [];
-function updateBatchUI() {
-    selectedSongs = []; songCards.forEach(c => { if (c.classList.contains('selected')) selectedSongs.push(c.dataset.song); });
-    if (selectedCount) selectedCount.textContent = selectedSongs.length;
-    if (batchBar) batchBar.style.display = selectedSongs.length > 0 ? 'flex' : 'none';
+
+if (songCards.length > 0) {
+    batchBar.style.display = 'flex';
+    songCards.forEach(card => {
+        card.addEventListener('click', function(e) {
+            if (e.target.classList.contains('song-delete')) return;
+            this.classList.toggle('selected');
+            updateSelectedSongs();
+        });
+    });
 }
-songCards.forEach((c,i) => c.addEventListener('click', function(e) { if (e.target.tagName === 'A') return; if (e.ctrlKey) c.classList.toggle('selected'); else { songCards.forEach(sc => sc.classList.remove('selected')); c.classList.add('selected'); } updateBatchUI(); }));
-document.getElementById('selectAllBtn')?.addEventListener('click', e => { e.preventDefault(); songCards.forEach(c => c.classList.add('selected')); updateBatchUI(); });
-document.getElementById('cancelSelectBtn')?.addEventListener('click', e => { e.preventDefault(); songCards.forEach(c => c.classList.remove('selected')); updateBatchUI(); });
-document.getElementById('batchDeleteBtn')?.addEventListener('click', function() {
-    if (selectedSongs.length === 0) return alert('请先选择歌曲');
-    if (confirm('删除 ' + selectedSongs.length + ' 首歌曲？')) {
-        var form = document.createElement('form'); form.method = 'post';
-        form.innerHTML = '<input type="hidden" name="action" value="batch_delete"><input type="hidden" name="songs[]" value="' + selectedSongs.join('","') + '">';
-        document.body.appendChild(form); form.submit();
+
+function updateSelectedSongs() {
+    selectedSongs = [];
+    document.querySelectorAll('.song-card.selected').forEach(card => {
+        selectedSongs.push(card.dataset.song);
+    });
+    selectedCount.textContent = selectedSongs.length;
+    batchDeleteSongs.value = JSON.stringify(selectedSongs);
+}
+
+selectAllBtn.addEventListener('click', function() {
+    songCards.forEach(card => {
+        card.classList.add('selected');
+    });
+    updateSelectedSongs();
+});
+
+cancelSelectBtn.addEventListener('click', function() {
+    songCards.forEach(card => {
+        card.classList.remove('selected');
+    });
+    updateSelectedSongs();
+});
+
+batchDeleteBtn.addEventListener('click', function() {
+    if (selectedSongs.length === 0) {
+        alert('请选择要删除的歌曲');
+        return;
+    }
+    if (confirm(`确定删除选中的 ${selectedSongs.length} 首歌曲吗？`)) {
+        batchDeleteForm.action = '<?php echo $currentUrl; ?>&artist=<?php echo urlencode($currentArtist); ?>&album=<?php echo urlencode($currentAlbum); ?>';
+        batchDeleteForm.submit();
     }
 });
-updateBatchUI();
-<?php endif; ?>
 </script>
-
-<?php include 'footer.php'; ?>
